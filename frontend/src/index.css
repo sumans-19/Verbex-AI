@@ -1,0 +1,113 @@
+@import "tailwindcss";
+
+@theme {
+  --color-background: #f1f5f9;
+  --color-surface: rgba(255, 255, 255, 0.85);
+  --color-primary: #0f172a;
+  --color-accent-blue: #2563eb;
+  --color-accent-sage: #475569;
+  --color-accent-gray: #64748b;
+  --color-accent-red: #dc2626;
+  --color-accent-purple: #7c3aed;
+  --color-muted: #64748b;
+  --color-text: #1e293b;
+  --color-border: #e2e8f0;
+
+  --font-serif: "Plus Jakarta Sans", sans-serif;
+  --font-mono: "DM Mono", monospace;
+  --font-sans: "Inter", system-ui, sans-serif;
+
+  --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+  --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.08), 0 2px 4px -2px rgb(0 0 0 / 0.08);
+  --shadow-premium: 0 10px 15px -3px rgba(0, 0, 0, 0.05), 0 4px 6px -2px rgba(0, 0, 0, 0.02);
+}
+
+@layer base {
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Plus+Jakarta+Sans:ital,wght@0,400;0,700;1,400&family=DM+Mono&display=swap');
+
+  :root {
+    --background: #f1f5f9;
+    --surface: rgba(255, 255, 255, 0.85);
+    --primary: #0f172a;
+    --border: #e2e8f0;
+    --text: #1e293b;
+    --muted: #64748b;
+  }
+
+  body {
+    @apply bg-background text-text font-sans antialiased;
+    margin: 0;
+    overflow-x: hidden;
+  }
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 10px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+@keyframes fadeIn {
+  0% { opacity: 0; transform: translateY(4px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+
+.page {
+  animation: fadeIn 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.stagger-1 { animation-delay: 0.05s; }
+.stagger-2 { animation-delay: 0.1s; }
+.stagger-3 { animation-delay: 0.15s; }
+.stagger-4 { animation-delay: 0.2s; }
+.stagger-5 { animation-delay: 0.25s; }
+
+/* Premium Unique Box Designs */
+.glass-panel {
+  @apply bg-surface/80 border border-white/40 shadow-premium rounded-2xl;
+  backdrop-filter: blur(12px) saturate(160%);
+  -webkit-backdrop-filter: blur(12px) saturate(160%);
+}
+
+.corporate-card {
+  @apply bg-white border border-slate-200/60 shadow-sm rounded-2xl relative overflow-hidden transition-all duration-300;
+}
+
+.corporate-card:hover {
+  @apply shadow-md border-accent-blue/20;
+}
+
+.corporate-card::before {
+  content: "";
+  @apply absolute top-0 left-0 w-full h-[3px] opacity-0 transition-opacity duration-300;
+  background: linear-gradient(90deg, #2563eb, transparent);
+}
+
+.corporate-card:hover::before {
+  @apply opacity-30;
+}
+
+.interactive-hover {
+  @apply transition-all duration-200 hover:shadow-md hover:border-accent-blue/10 cursor-pointer;
+}
+
+/* Typography Overrides */
+h1, h2, h3, h4, .font-serif {
+  @apply font-serif tracking-tight;
+}
+
+.font-mono {
+  @apply font-mono;
+}
