@@ -1,7 +1,16 @@
-export type PageId = 'manager' | 'meetings' | 'tasks' | 'decisions' | 'speakers' | 'stale' | 'ingest';
+export type PageId = 'manager' | 'meetings' | 'tasks' | 'decisions' | 'speakers' | 'stale' | 'ingest' | 'employees';
+
+export interface Employee {
+  id: string;
+  name: string;
+  emp_id: string;
+  department?: string | null;
+  github_username?: string | null;
+  created_at: string;
+}
 
 export interface Speaker {
-  id: number;
+  id: string;
   name: string;
   role: string;
   initials: string;
@@ -13,42 +22,46 @@ export interface Speaker {
 }
 
 export interface Meeting {
-  id: number;
+  id: string;
   title: string;
-  host: string;
-  date_time: string;
-  attendee_count: number;
-  tasks_count: number;
-  decisions_count: number;
-  stale_count: number;
-  health_score: number;
-  status: string;
+  host_name: string;
+  description?: string;
+  status: 'pending' | 'transcribing' | 'processing' | 'complete' | 'failed';
+  input_type?: 'uploaded_audio' | 'text' | 'live_audio';
+  raw_file_path?: string;
+  raw_transcript?: string;
+  cleaned_transcript?: string;
+  tldr?: string;
+  health_score?: number;
+  created_at: string;
+  processed_at?: string;
+  task_count?: number;
+  decision_count?: number;
 }
 
 export interface Task {
-  id: number;
+  id: string;
+  meeting_id: string;
   title: string;
-  description: string;
-  meeting_id: number;
-  assignee_name: string;
-  assignee_initials: string;
-  assignee_color: string;
-  confidence: number;
+  description?: string;
   priority: 'high' | 'medium' | 'low';
-  status: 'auto-pushed' | 'pending-review' | 'discarded' | 'stale';
-  is_ambiguous: boolean;
-  transcript_quote?: string;
-  days_overdue?: number;
-  mentioned_in_meeting_id?: number;
+  status: 'pending_review' | 'approved' | 'discarded';
+  confidence_score: number;
+  assignee_name?: string;
+  owner_emp_id?: string;
+  owner_dept?: string;
+  employee_id?: string;
+  source_quote?: string;
+  created_at: string;
 }
 
 export interface Decision {
-  id: number;
+  id: string;
+  meeting_id: string;
   title: string;
-  transcript_quote: string;
-  meeting_name: string;
-  date_time: string;
-  decided_by: string;
-  contradicts_decision_id?: number;
-  contradiction_warning?: string;
+  description?: string;
+  decided_by_name?: string;
+  source_quote?: string;
+  created_at: string;
 }
+
