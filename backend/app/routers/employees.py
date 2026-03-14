@@ -21,8 +21,12 @@ async def create_employee(employee: EmployeeCreate):
         data={
             "name": employee.name,
             "emp_id": employee.emp_id,
+            "email": employee.email,
             "department": employee.department,
-            "github_username": employee.github_username
+            "github_username": employee.github_username,
+            "jira_account_id": employee.jira_account_id,
+            "role": employee.role,
+            "avatar_url": employee.avatar_url,
         }
     )
 

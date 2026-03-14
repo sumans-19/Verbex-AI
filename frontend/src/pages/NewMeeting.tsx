@@ -9,44 +9,43 @@ import {
   Zap,
   Users,
   AlertCircle,
-  Square
+  Square,
+  Pencil
 } from 'lucide-react';
 import type { Meeting } from '../types.ts';
 
 const API_BASE_URL = 'http://localhost:8000/api';
-const WS_BASE_URL = 'ws://localhost:8000/api';
 
 const NewMeeting: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'upload' | 'paste' | 'live'>('upload');
   const [isProcessing, setIsProcessing] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [title, setTitle] = useState('');
-  const [hostName, setHostName] = useState('Suman S.');
+  const hostName = 'Suman S.';
   const [pastedText, setPastedText] = useState('');
   const [file, setFile] = useState<File | null>(null);
   const [docFile, setDocFile] = useState<File | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [processingStatus, setProcessingStatus] = useState<string>('Initializing...');
   const [processedData, setProcessedData] = useState<any | null>(null);
-  const [liveSegments, setLiveSegments] = useState<{phrase: string, time: string}[]>([]);
   
   const fileInputRef = useRef<HTMLInputElement>(null);
   const docInputRef = useRef<HTMLInputElement>(null);
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const socketRef = useRef<WebSocket | null>(null);
-  const transcriptEndRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    if (transcriptEndRef.current) {
-      transcriptEndRef.current.scrollIntoView({ behavior: 'smooth' });
-    }
-  }, [liveSegments]);
+
+
 
   const tabs = [
     { id: 'upload', label: 'Upload Audio', icon: <Upload size={16} /> },
     { id: 'paste', label: 'Document Upload', icon: <FileAudio size={16} /> },
     { id: 'live', label: 'Live Transcribe', icon: <Mic size={16} /> },
   ];
+
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const [recordingDuration, setRecordingDuration] = useState(0);
+  const timerRef = useRef<any>(null);
+  const meetingIdRef = useRef<string | null>(null);
 
   const startLiveRecording = async () => {
     if (!title.trim()) {
@@ -55,8 +54,10 @@ const NewMeeting: React.FC = () => {
     }
 
     try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       setError(null);
-      setLiveSegments([]);
+      audioChunksRef.current = [];
+      setRecordingDuration(0);
       
       // Step 1: Create Meeting
       const createResponse = await fetch(`${API_BASE_URL}/meetings/create`, {
@@ -66,67 +67,94 @@ const NewMeeting: React.FC = () => {
       });
       if (!createResponse.ok) throw new Error('Failed to create meeting session');
       const meeting: Meeting = await createResponse.json();
+      meetingIdRef.current = meeting.id;
 
-      // Step 2: Initialize Web Media
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      // Step 2: Initialize MediaRecorder
       const mediaRecorder = new MediaRecorder(stream);
       mediaRecorderRef.current = mediaRecorder;
 
-      // Step 3: Connect WebSocket
-      const socket = new WebSocket(`${WS_BASE_URL}/meetings/${meeting.id}/live`);
-      socketRef.current = socket;
-
-      socket.onopen = () => {
-        setIsRecording(true);
-        mediaRecorder.start(250); // Send chunks every 250ms
-      };
-
-      socket.onmessage = (event) => {
-        const data = JSON.parse(event.data);
-        if (data.type === 'transcript') {
-          setLiveSegments(prev => [...prev, { phrase: data.segment, time: data.timestamp }]);
-        } else if (data.type === 'status') {
-          setProcessingStatus(data.message);
-          setIsProcessing(true);
-        } else if (data.type === 'complete') {
-          setProcessedData(data);
-          setIsProcessing(false);
-          setIsRecording(false);
-          socket.close();
-        } else if (data.type === 'error') {
-          setError(data.message);
-          stopLiveRecording();
-        }
-      };
-
-      socket.onerror = () => {
-        setError('WebSocket connection error');
-        stopLiveRecording();
-      };
-
       mediaRecorder.ondataavailable = (event) => {
-        if (event.data.size > 0 && socket.readyState === WebSocket.OPEN) {
-          socket.send(event.data);
+        if (event.data.size > 0) {
+          audioChunksRef.current.push(event.data);
         }
       };
+
+      mediaRecorder.start(1000); // Collect data in 1s chunks
+      setIsRecording(true);
+      
+      // Start Timer
+      timerRef.current = setInterval(() => {
+        setRecordingDuration(prev => prev + 1);
+      }, 1000);
+
+      console.log("MediaRecorder started — capturing audio for Whisper...");
 
     } catch (err: any) {
+      console.error("Recording error:", err);
       setError(err.message || 'Could not start recording');
       setIsRecording(false);
     }
   };
 
-  const stopLiveRecording = () => {
+  const stopLiveRecording = async () => {
+    setIsRecording(false);
+    
+    // Stop Timer
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+
+    // Stop Recorder
     if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
       mediaRecorderRef.current.stop();
+      // Stop all tracks
       mediaRecorderRef.current.stream.getTracks().forEach(track => track.stop());
     }
-    
-    if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
-      socketRef.current.send('STOP');
+
+    setIsProcessing(true);
+    setProcessingStatus('Finalizing audio and sending to Whisper...');
+
+    // Wait slightly for the last chunk
+    await new Promise(resolve => setTimeout(resolve, 500));
+
+    const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+    if (audioBlob.size === 0 || !meetingIdRef.current) {
+      setError('No audio was captured. Please try again.');
+      setIsProcessing(false);
+      return;
     }
-    
-    setIsRecording(false);
+
+    const formData = new FormData();
+    formData.append('file', audioBlob, `live_recording_${meetingIdRef.current}.webm`);
+
+    setProcessingStatus('Transcribing with Whisper (Groq)...');
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/meetings/${meetingIdRef.current}/process-live`, {
+        method: 'POST',
+        body: formData
+      });
+      
+      if (!response.ok) {
+        const errData = await response.json().catch(() => ({}));
+        throw new Error(errData.detail || 'Processing failed');
+      }
+      
+      const data = await response.json();
+      setProcessedData(data);
+      setIsProcessing(false);
+    } catch (err: any) {
+      console.error("Processing error:", err);
+      setError(err.message || 'Failed to process transcript');
+      setIsProcessing(false);
+    }
+  };
+
+  const formatDuration = (seconds: number) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
 
   const handleProcess = async () => {
@@ -220,6 +248,99 @@ const NewMeeting: React.FC = () => {
     }
   };
 
+  const [editingTask, setEditingTask] = useState<number | null>(null);
+  const [editingDecision, setEditingDecision] = useState<number | null>(null);
+  const [employees, setEmployees] = useState<any[]>([]);
+
+  useEffect(() => {
+    fetch(`${API_BASE_URL}/employees/`)
+      .then(res => res.json())
+      .then(data => setEmployees(data))
+      .catch(err => console.error("Failed to fetch employees:", err));
+  }, []);
+
+  const updateTaskLocally = (idx: number, field: string, value: any) => {
+    setProcessedData((prev: any) => {
+      if (!prev || !prev.tasks) return prev;
+      const newTasks = [...prev.tasks];
+      newTasks[idx] = { ...newTasks[idx], [field]: value };
+      return { ...prev, tasks: newTasks };
+    });
+  };
+
+  const updateDecisionLocally = (idx: number, field: string, value: any) => {
+    setProcessedData((prev: any) => {
+      if (!prev || !prev.decisions) return prev;
+      const newDecisions = [...prev.decisions];
+      newDecisions[idx] = { ...newDecisions[idx], [field]: value };
+      return { ...prev, decisions: newDecisions };
+    });
+  };
+
+  const saveTask = async (idx: number) => {
+    const task = processedData.tasks[idx];
+    if (!task.id) return;
+    try {
+      await fetch(`${API_BASE_URL}/tasks/${task.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(task)
+      });
+      setEditingTask(null);
+    } catch (err) {
+      console.error("Failed to save task:", err);
+    }
+  };
+
+  const saveDecision = async (idx: number) => {
+    const decision = processedData.decisions[idx];
+    if (!decision.id) return;
+    try {
+      await fetch(`${API_BASE_URL}/decisions/${decision.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(decision)
+      });
+      setEditingDecision(null);
+    } catch (err) {
+      console.error("Failed to save decision:", err);
+    }
+  };
+
+  const handleComplete = async () => {
+    if (!processedData?.id) {
+       window.location.href = '/';
+       return;
+    }
+    
+    setIsProcessing(true);
+    setProcessingStatus('Pushing tasks to Integrations (GitHub & Jira)...');
+
+    try {
+      // 1. Save any pending edits
+      if (editingTask !== null) await saveTask(editingTask);
+      if (editingDecision !== null) await saveDecision(editingDecision);
+
+      // 2. Trigger Integration Push
+      const response = await fetch(`${API_BASE_URL}/meetings/${processedData.id}/push-all`, {
+        method: 'POST'
+      });
+      
+      if (!response.ok) {
+        console.error("Integration push failed");
+      }
+      
+      setProcessingStatus('Success! Redirecting...');
+      setTimeout(() => {
+        window.location.href = '/';
+      }, 1000);
+    } catch (err) {
+      console.error("Failed to complete meeting:", err);
+      setIsProcessing(false);
+      window.location.href = '/';
+    }
+  };
+
   if (processedData && !isProcessing && !isRecording) {
     return (
       <div className="page p-8 max-w-5xl mx-auto animate-fadeIn">
@@ -228,12 +349,6 @@ const NewMeeting: React.FC = () => {
               <h2 className="text-3xl font-bold text-primary mb-2">Ingestion Complete</h2>
               <p className="text-slate-500 font-medium">Strategic intelligence has been extracted and registry updated.</p>
            </div>
-           <button 
-             onClick={() => window.location.reload()}
-             className="px-6 py-2.5 bg-accent-teal text-white rounded font-bold uppercase tracking-widest text-xs hover:bg-accent-pine transition-all"
-           >
-             Done
-           </button>
         </div>
 
         <div className="bg-slate-900 rounded-xl p-8 mb-8 text-white shadow-2xl relative overflow-hidden border border-slate-800">
@@ -285,45 +400,97 @@ const NewMeeting: React.FC = () => {
               <div className="flex-1 overflow-y-auto custom-scrollbar p-6 space-y-4">
                  {processedData.tasks?.length > 0 ? (
                     processedData.tasks.map((task: any, idx: number) => (
-                       <div key={idx} className={`corporate-card p-5 hover:border-accent-teal/30 transition-all slide-up stagger-${(idx % 5) + 1}`}>
+                       <div key={idx} className={`corporate-card p-5 hover:border-accent-teal/30 transition-all slide-up stagger-${(idx % 5) + 1} ${editingTask === idx ? 'ring-2 ring-accent-teal shadow-xl bg-white' : ''}`}>
                           <div className="flex justify-between items-start mb-3">
                              <span className="text-[10px] font-bold bg-slate-100 text-slate-500 px-2 py-0.5 rounded uppercase tracking-wider">
                                 Task #{idx + 1}
                              </span>
-                             <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded tracking-tighter ${
-                                task.priority === 'high' ? 'bg-rose-100 text-rose-600' : 
-                                task.priority === 'medium' ? 'bg-amber-100 text-amber-600' : 'bg-slate-100 text-slate-400'
-                             }`}>
-                                {task.priority || 'Medium'}
-                             </span>
+                             <div className="flex items-center gap-2">
+                               {editingTask === idx ? (
+                                 <button onClick={() => saveTask(idx)} className="text-[9px] font-bold text-white bg-accent-teal px-2 py-0.5 rounded uppercase">Save</button>
+                               ) : (
+                                 <button onClick={() => setEditingTask(idx)} className="text-slate-300 hover:text-accent-teal transition-colors"><Pencil size={12}/></button>
+                               )}
+                               <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded tracking-tighter ${
+                                  task.priority === 'high' ? 'bg-rose-100 text-rose-600' : 
+                                  task.priority === 'medium' ? 'bg-amber-100 text-amber-600' : 'bg-slate-100 text-slate-400'
+                               }`}>
+                                  {task.priority || 'Medium'}
+                               </span>
+                             </div>
                           </div>
-                          <h5 className="font-bold text-primary text-[15px] mb-2">{task.title}</h5>
-                          <p className="text-slate-500 text-xs leading-relaxed font-medium mb-4">{task.description}</p>
+
+                          {editingTask === idx ? (
+                             <input 
+                               className="w-full font-bold text-primary text-[15px] mb-2 bg-slate-50 p-1 rounded border border-slate-200"
+                               value={task.title}
+                               onChange={(e) => updateTaskLocally(idx, 'title', e.target.value)}
+                             />
+                          ) : (
+                             <h5 className="font-bold text-primary text-[15px] mb-2">{task.title}</h5>
+                          )}
+
+                          {editingTask === idx ? (
+                             <textarea 
+                               className="w-full text-slate-500 text-xs leading-relaxed font-medium mb-4 bg-slate-50 p-2 rounded border border-slate-200"
+                               value={task.description}
+                               onChange={(e) => updateTaskLocally(idx, 'description', e.target.value)}
+                               rows={3}
+                             />
+                          ) : (
+                             <p className="text-slate-500 text-xs leading-relaxed font-medium mb-4">{task.description}</p>
+                          )}
                           
                           {(task.assignee_name || task.owner_emp_id || task.owner_dept) && (
                              <div className="pt-4 border-t border-slate-100 flex flex-wrap gap-4">
-                                {task.assignee_name && (
-                                   <div className="flex items-center gap-2">
-                                      <div className="w-6 h-6 rounded-full bg-teal-50 text-accent-teal flex items-center justify-center text-[10px] font-bold border border-teal-100">
-                                         {task.assignee_name.charAt(0)}
-                                      </div>
-                                      <div>
-                                         <p className="text-[10px] font-bold text-slate-600 leading-none">{task.assignee_name}</p>
-                                         <p className="text-[8px] font-bold text-slate-400 uppercase tracking-tighter">Owner</p>
-                                      </div>
+                                {editingTask === idx ? (
+                                   <div className="w-full">
+                                      <p className="text-[8px] font-bold text-slate-400 uppercase tracking-tighter mb-1">Assignee</p>
+                                      <select 
+                                        className="w-full text-[10px] font-bold bg-slate-50 border border-slate-200 rounded px-2 py-1"
+                                        value={task.owner_emp_id || ''}
+                                        onChange={(e) => {
+                                          const emp = employees.find(emp => emp.emp_id === e.target.value);
+                                          setProcessedData((prev: any) => {
+                                             if (!prev || !prev.tasks) return prev;
+                                             const newTasks = [...prev.tasks];
+                                             newTasks[idx] = { 
+                                               ...newTasks[idx], 
+                                               owner_emp_id: e.target.value,
+                                               assignee_name: emp?.name || '',
+                                               owner_dept: emp?.department || '',
+                                               employee_id: emp?.id || null
+                                             };
+                                             return { ...prev, tasks: newTasks };
+                                          });
+                                        }}
+                                      >
+                                        <option value="">Map Employee...</option>
+                                        {employees.map(emp => (
+                                          <option key={emp.emp_id} value={emp.emp_id}>{emp.name}</option>
+                                        ))}
+                                      </select>
                                    </div>
-                                )}
-                                {task.owner_emp_id && (
-                                   <div>
-                                      <p className="text-[10px] font-bold text-slate-600 leading-none">{task.owner_emp_id}</p>
-                                      <p className="text-[8px] font-bold text-slate-400 uppercase tracking-tighter">ID</p>
-                                   </div>
-                                )}
-                                {task.owner_dept && (
-                                   <div>
-                                      <p className="text-[10px] font-bold text-slate-600 leading-none whitespace-nowrap overflow-hidden text-ellipsis max-w-[80px]">{task.owner_dept}</p>
-                                      <p className="text-[8px] font-bold text-slate-400 uppercase tracking-tighter">Dept</p>
-                                   </div>
+                                ) : (
+                                   <>
+                                      {task.assignee_name && (
+                                         <div className="flex items-center gap-2">
+                                            <div className="w-6 h-6 rounded-full bg-teal-50 text-accent-teal flex items-center justify-center text-[10px] font-bold border border-teal-100">
+                                               {task.assignee_name.charAt(0)}
+                                            </div>
+                                            <div>
+                                               <p className="text-[10px] font-bold text-slate-600 leading-none">{task.assignee_name}</p>
+                                               <p className="text-[8px] font-bold text-slate-400 uppercase tracking-tighter">Owner</p>
+                                            </div>
+                                         </div>
+                                      )}
+                                      {task.owner_dept && (
+                                         <div>
+                                            <p className="text-[10px] font-bold text-slate-600 leading-none whitespace-nowrap overflow-hidden text-ellipsis max-w-[80px]">{task.owner_dept}</p>
+                                            <p className="text-[8px] font-bold text-slate-400 uppercase tracking-tighter">Dept</p>
+                                         </div>
+                                      )}
+                                   </>
                                 )}
                              </div>
                           )}
@@ -349,9 +516,35 @@ const NewMeeting: React.FC = () => {
               <div className="flex-1 overflow-y-auto custom-scrollbar p-6 space-y-4">
                  {processedData.decisions?.length > 0 ? (
                     processedData.decisions.map((decision: any, idx: number) => (
-                       <div key={idx} className={`corporate-card p-5 border-l-4 border-l-emerald-400 slide-up stagger-${(idx % 5) + 1}`}>
-                          <h5 className="font-bold text-primary text-[15px] mb-2">{decision.title}</h5>
-                          <p className="text-slate-500 text-xs leading-relaxed font-medium">{decision.description}</p>
+                       <div key={idx} className={`corporate-card p-5 border-l-4 border-l-emerald-400 slide-up stagger-${(idx % 5) + 1} ${editingDecision === idx ? 'bg-white shadow-lg border-emerald-500' : ''}`}>
+                          <div className="flex justify-between items-start mb-2">
+                            {editingDecision === idx ? (
+                               <input 
+                                 className="w-full font-bold text-primary text-[15px] bg-slate-50 p-1 border border-slate-200 rounded outline-none"
+                                 value={decision.title}
+                                 onChange={(e) => updateDecisionLocally(idx, 'title', e.target.value)}
+                               />
+                            ) : (
+                               <h5 className="font-bold text-primary text-[15px]">{decision.title}</h5>
+                            )}
+                            <button 
+                              onClick={() => editingDecision === idx ? saveDecision(idx) : setEditingDecision(idx)}
+                              className="text-slate-300 hover:text-emerald-500 transition-colors ml-2"
+                            >
+                              {editingDecision === idx ? <CheckCircle2 size={14}/> : <Pencil size={14}/>}
+                            </button>
+                          </div>
+
+                          {editingDecision === idx ? (
+                             <textarea 
+                               className="w-full text-slate-500 text-xs leading-relaxed font-medium bg-slate-50 p-2 border border-slate-200 rounded outline-none mt-2"
+                               value={decision.description}
+                               onChange={(e) => updateDecisionLocally(idx, 'description', e.target.value)}
+                               rows={2}
+                             />
+                          ) : (
+                             <p className="text-slate-500 text-xs leading-relaxed font-medium">{decision.description}</p>
+                          )}
                        </div>
                     ))
                  ) : (
@@ -362,6 +555,16 @@ const NewMeeting: React.FC = () => {
                  )}
               </div>
            </div>
+        </div>
+
+        <div className="flex justify-end mt-12 pb-12">
+           <button 
+             onClick={handleComplete}
+             className="px-10 py-4 bg-accent-teal text-white rounded-lg font-bold uppercase tracking-[0.2em] text-[13px] hover:bg-accent-pine transition-all shadow-xl hover:-translate-y-1 active:translate-y-0 flex items-center gap-3 group"
+           >
+             Complete
+             <ChevronRight size={18} className="group-hover:translate-x-1 transition-transform" />
+           </button>
         </div>
       </div>
     );
@@ -411,36 +614,32 @@ const NewMeeting: React.FC = () => {
             </div>
             
             <h3 className="text-xl font-bold text-primary mb-2">
-              {isRecording ? 'Meeting in Progress...' : 'Live Intelligence Feed'}
+              {isRecording ? 'Meeting Recording Active' : 'Live Intelligence Feed'}
             </h3>
             
             <p className="text-slate-500 text-sm max-w-xs mx-auto text-center font-medium mb-8">
               {isRecording 
-                ? 'Streaming real-time audio to Deepgram for instantaneous transcription.' 
-                : 'Enter a title and start recording to stream live audio to the analysis engine.'}
+                ? 'High-fidelity audio is being captured for state-of-the-art Whisper analysis.' 
+                : 'Enter a title and start recording to capture audio for precise meeting intelligence extraction.'}
             </p>
 
             {isRecording && (
-              <div className="w-full max-w-lg bg-slate-900 rounded-xl p-6 mb-8 shadow-2xl border border-slate-800 h-48 flex flex-col">
-                <div className="flex items-center justify-between mb-4 border-b border-slate-800 pb-2">
-                  <span className="text-[9px] font-bold text-accent-teal uppercase tracking-widest flex items-center gap-2">
-                    <div className="w-1 h-1 rounded-full bg-accent-teal"></div>
-                    Direct Feed
-                  </span>
-                  <span className="text-[9px] font-bold text-slate-500 uppercase">Live Transcribe</span>
+              <div className="w-full max-w-lg bg-slate-900 rounded-xl p-8 mb-8 shadow-2xl border border-slate-800 flex flex-col items-center justify-center space-y-4">
+                <div className="flex items-center gap-4">
+                  <div className="flex gap-1 items-end h-6">
+                    <div className="w-1 bg-accent-teal rounded-full animate-bounce" style={{ height: '60%', animationDelay: '0s' }}></div>
+                    <div className="w-1 bg-accent-teal rounded-full animate-bounce" style={{ height: '100%', animationDelay: '0.2s' }}></div>
+                    <div className="w-1 bg-accent-teal rounded-full animate-bounce" style={{ height: '40%', animationDelay: '0.4s' }}></div>
+                    <div className="w-1 bg-accent-teal rounded-full animate-bounce" style={{ height: '80%', animationDelay: '0.1s' }}></div>
+                    <div className="w-1 bg-accent-teal rounded-full animate-bounce" style={{ height: '100%', animationDelay: '0.3s' }}></div>
+                  </div>
+                  <span className="text-2xl font-mono text-white tracking-widest">{formatDuration(recordingDuration)}</span>
                 </div>
-                <div className="flex-1 overflow-y-auto custom-scrollbar space-y-2 pr-2">
-                  {liveSegments.length === 0 && (
-                    <p className="text-slate-600 italic text-[11px] font-mono">Waiting for audio segments...</p>
-                  )}
-                  {liveSegments.map((seg, i) => (
-                    <div key={i} className="flex gap-3 animate-fadeIn">
-                      <span className="text-[8px] font-bold text-slate-500 font-mono pt-1">[{seg.time}]</span>
-                      <p className="text-slate-100 text-[12px] font-medium leading-relaxed">{seg.phrase}</p>
-                    </div>
-                  ))}
-                  <div ref={transcriptEndRef} />
+                <div className="px-4 py-1.5 bg-rose-500/10 border border-rose-500/20 rounded-full flex items-center gap-2">
+                   <div className="w-2 h-2 rounded-full bg-rose-500 animate-pulse"></div>
+                   <span className="text-[10px] font-bold text-rose-500 uppercase tracking-widest">Recording Audio</span>
                 </div>
+                <p className="text-slate-500 text-[11px] font-bold uppercase tracking-tighter">Stay on this page for best capture quality</p>
               </div>
             )}
 
@@ -567,7 +766,7 @@ const NewMeeting: React.FC = () => {
         )}
       </div>
 
-      {isProcessing && (
+      {isProcessing && !isRecording && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[100] flex items-center justify-center p-6">
            <div className="glass-panel max-w-sm w-full p-10 bg-white text-center shadow-premium border-accent-teal/20">
               <div className="w-16 h-16 bg-teal-50 rounded flex items-center justify-center mx-auto mb-8 border border-teal-100">

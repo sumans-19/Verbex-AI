@@ -18,6 +18,12 @@ Read the transcript and extract all tasks and decisions precisely.
 Meeting: {meeting_title}
 Host: {host_name}
 
+TEAM MEMBERS (Assign tasks to these people if mentioned):
+1. Suman S
+2. Likhith Gowda M 
+3. J Hemanth
+4. Nandi Prasad K M
+
 TASK = something someone must DO after this meeting ends
 - Must have an action verb: fix, build, write, implement, review, update, create, test, deploy
 - Must have an owner who committed to it or was assigned it

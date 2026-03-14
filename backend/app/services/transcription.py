@@ -1,10 +1,9 @@
 import httpx
 import json
 import asyncio
-from typing import List, Tuple
-from threading import Event
+
+from typing import List, Tuple, Any
 from fastapi import HTTPException
-from deepgram import DeepgramClient, LiveTranscriptionEvents, LiveOptions
 from ..config import settings
 
 async def transcribe_audio_file(file_path: str) -> str:
@@ -18,10 +17,6 @@ async def transcribe_audio_file(file_path: str) -> str:
     
     url = "https://api.openai.com/v1/audio/transcriptions"
     headers = {"Authorization": f"Bearer {api_key}"}
-    
-    # Whisper needs sync file handle? The requirement says:
-    # "Opens file with open() not aiofiles (Whisper needs sync file handle)"
-    # But we are using httpx.AsyncClient. We'll open it synchronously and pass to files.
     
     max_retries = 3
     base_delay = 2 # seconds
@@ -105,51 +100,5 @@ def clean_transcript(raw: str) -> str:
     cleaned = [line.strip() for line in lines if line.strip()]
     return "\n".join(cleaned)
 
-def create_deepgram_connection(api_key: str):
-    """
-    Creates Deepgram live connection with exact requirements.
-    Returns (connection, transcript_segments, finished_event)
-    """
-    client = DeepgramClient(api_key)
-    transcript_segments = []
-    finished_event = Event()
-    
-    connection = client.listen.live.v("1")
-    
-    def on_message(self, result, **kwargs):
-        sentence = result.channel.alternatives[0].transcript
-        if sentence and sentence.strip() != "":
-            start_seconds = int(result.start)
-            mm, ss = divmod(start_seconds, 60)
-            hh, mm = divmod(mm, 60)
-            timestamp = f"{hh:02d}:{mm:02d}:{ss:02d}"
-            segment_text = f"[{timestamp}] {sentence.strip()}"
-            transcript_segments.append(segment_text)
-            
-            # Note: The caller needs to handle sending this to the WebSocket client
-            # We skip it here as this function just sets up the connection object meta
-            
-    def on_error(self, error, **kwargs):
-        # Error handling is done by the caller who has the WS session
-        pass
-        
-    def on_close(self, self_obj, **kwargs):
-        finished_event.set()
-        
-    options = LiveOptions(
-        model="nova-2",
-        language="en-US",
-        punctuate=True,
-        interim_results=False,
-        utterance_end_ms=1000,
-        vad_events=True,
-        smart_format=True,
-    )
-    
-    connection.on(LiveTranscriptionEvents.Transcript, on_message)
-    connection.on(LiveTranscriptionEvents.Error, on_error)
-    connection.on(LiveTranscriptionEvents.Close, on_close)
-    
-    connection.start(options)
-    
-    return connection, transcript_segments, finished_event
+
+
